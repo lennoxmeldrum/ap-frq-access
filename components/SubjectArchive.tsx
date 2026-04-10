@@ -23,14 +23,84 @@ const formatDate = (date: Date | null): string => {
   });
 };
 
-const formatUnits = (units: (string | number)[]): string => {
-  if (!units || units.length === 0) return 'Random';
+// The "effective" topic list for display: prefer metadata.actualSubTopics
+// (what the model said it used), fall back to metadata.selectedSubTopics
+// (what the user asked for). Legacy docs often only have the latter, and
+// the backfill script populates actualSubTopics for them from the
+// storagePath filename.
+const effectiveTopics = (item: ArchivedFRQDoc): string[] => {
+  const actual = item.metadata.actualSubTopics;
+  if (Array.isArray(actual) && actual.length > 0) return actual;
+  const selected = item.metadata.selectedSubTopics;
+  if (Array.isArray(selected) && selected.length > 0) return selected;
+  return [];
+};
+
+// Derive the unique unit numbers from a topic list like ["3.2", "3.5", "4.1"]
+// -> ["3", "4"]. Ordered numerically.
+const deriveUnits = (topics: string[]): string[] => {
+  const units = new Set<string>();
+  for (const topic of topics) {
+    const unit = topic.split('.')[0];
+    if (unit) units.add(unit);
+  }
+  return Array.from(units).sort((a, b) => Number(a) - Number(b));
+};
+
+const formatUnits = (topics: string[]): string => {
+  const units = deriveUnits(topics);
+  if (units.length === 0) return '—';
   return units.map((u) => `Unit ${u}`).join(', ');
 };
 
 const formatTopics = (topics: string[]): string => {
   if (!topics || topics.length === 0) return '—';
   return topics.join(', ');
+};
+
+type SortColumn = 'generated' | 'units' | 'topics';
+type SortDirection = 'asc' | 'desc';
+
+// Compare helper that uses natural numeric ordering where it matters
+// (unit numbers, topic numbers) instead of lexicographic string order.
+const compareNatural = (a: string, b: string): number =>
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+interface SortHeaderProps {
+  label: string;
+  column: SortColumn;
+  activeColumn: SortColumn;
+  direction: SortDirection;
+  onClick: (column: SortColumn) => void;
+}
+
+const SortHeader: React.FC<SortHeaderProps> = ({
+  label,
+  column,
+  activeColumn,
+  direction,
+  onClick,
+}) => {
+  const isActive = activeColumn === column;
+  const ariaSort = isActive
+    ? direction === 'asc'
+      ? 'ascending'
+      : 'descending'
+    : 'none';
+
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(column)}
+      aria-sort={ariaSort}
+      className="inline-flex items-center gap-1 uppercase tracking-wider font-semibold text-xs text-gray-500 hover:text-gray-900 focus:outline-none focus:text-gray-900"
+    >
+      <span>{label}</span>
+      <span className={`text-[9px] leading-none ${isActive ? 'opacity-100 text-gray-900' : 'opacity-30'}`}>
+        {isActive ? (direction === 'asc' ? '▲' : '▼') : '▼'}
+      </span>
+    </button>
+  );
 };
 
 const SubjectArchive: React.FC = () => {
@@ -50,6 +120,23 @@ const SubjectArchive: React.FC = () => {
 
   const [frqTypes, setFrqTypes] = useState<string[]>([]);
   const [activeFrqType, setActiveFrqType] = useState<string | null>(null);
+
+  // Client-side sort state. The server always returns rows in
+  // createdAt-desc order (from the Firestore query), and this state
+  // re-sorts the currently loaded page in-place when the user clicks a
+  // column header. Cross-page sort is intentionally not attempted —
+  // pagination stays cursor-driven against the server.
+  const [sortColumn, setSortColumn] = useState<SortColumn>('generated');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+  const handleSortClick = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
 
   // The trailing cursor of whatever page is currently on screen. Held in a
   // ref instead of state because it's a Firestore snapshot object and we
@@ -136,6 +223,31 @@ const SubjectArchive: React.FC = () => {
     await loadPage(cursor);
   };
 
+  // Re-sort the currently loaded page in memory whenever the sort
+  // state or the underlying items change. This is a view layer
+  // transformation only — it doesn't affect pagination cursors.
+  const sortedItems = useMemo(() => {
+    const copy = [...items];
+    copy.sort((a, b) => {
+      let cmp = 0;
+      if (sortColumn === 'generated') {
+        const at = a.createdAt?.getTime() ?? 0;
+        const bt = b.createdAt?.getTime() ?? 0;
+        cmp = at - bt;
+      } else if (sortColumn === 'units') {
+        const au = deriveUnits(effectiveTopics(a)).join(',');
+        const bu = deriveUnits(effectiveTopics(b)).join(',');
+        cmp = compareNatural(au, bu);
+      } else if (sortColumn === 'topics') {
+        const at = effectiveTopics(a).join(',');
+        const bt = effectiveTopics(b).join(',');
+        cmp = compareNatural(at, bt);
+      }
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+    return copy;
+  }, [items, sortColumn, sortDirection]);
+
   if (!subject) {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-20 text-center">
@@ -200,10 +312,34 @@ const SubjectArchive: React.FC = () => {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   <tr>
-                    <th className="px-4 py-3">Generated</th>
+                    <th className="px-4 py-3">
+                      <SortHeader
+                        label="Generated"
+                        column="generated"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onClick={handleSortClick}
+                      />
+                    </th>
                     <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3 hidden md:table-cell">Units</th>
-                    <th className="px-4 py-3 hidden lg:table-cell">Topics</th>
+                    <th className="px-4 py-3 hidden md:table-cell">
+                      <SortHeader
+                        label="Units"
+                        column="units"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onClick={handleSortClick}
+                      />
+                    </th>
+                    <th className="px-4 py-3 hidden lg:table-cell">
+                      <SortHeader
+                        label="Topics"
+                        column="topics"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onClick={handleSortClick}
+                      />
+                    </th>
                     <th className="px-4 py-3 text-right">Points</th>
                   </tr>
                 </thead>
@@ -222,8 +358,9 @@ const SubjectArchive: React.FC = () => {
                       </td>
                     </tr>
                   )}
-                  {items.map((item) => {
+                  {sortedItems.map((item) => {
                     const isSelected = selected?.id === item.id;
+                    const topics = effectiveTopics(item);
                     return (
                       <tr
                         key={item.id}
@@ -241,13 +378,13 @@ const SubjectArchive: React.FC = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-600 hidden md:table-cell">
-                          {formatUnits(item.metadata.selectedUnits)}
+                          {formatUnits(topics)}
                           {item.metadata.wasRandom && (
                             <span className="ml-2 text-xs text-gray-400">(random)</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-gray-600 hidden lg:table-cell max-w-xs truncate">
-                          {formatTopics(item.metadata.actualSubTopics)}
+                          {formatTopics(topics)}
                         </td>
                         <td className="px-4 py-3 text-right text-gray-900 font-medium">
                           {item.maxPoints ?? '—'}
