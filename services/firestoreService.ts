@@ -5,7 +5,7 @@ import {
   Firestore,
   getCountFromServer,
   getDocs,
-  getFirestore,
+  initializeFirestore as initializeFirestoreSDK,
   limit,
   orderBy,
   query,
@@ -31,7 +31,20 @@ const initializeFirestore = async (): Promise<Firestore | null> => {
   if (!firestore) {
     const app = await getFirebaseAppWithAuth();
     if (!app) return null;
-    firestore = getFirestore(app);
+
+    // Use initializeFirestore(...) instead of getFirestore(app) so we can
+    // force HTTP long polling for the transport. The default WebChannel
+    // streaming transport opens a long-lived `Listen` stream against
+    // firestore.googleapis.com; on some networks / hosting stacks that
+    // stream 404s or hangs, which makes getDocs() wait forever on a
+    // connection that never comes up (getCountFromServer is unaffected
+    // because it's a one-shot REST call over a different code path).
+    // Forcing long polling sacrifices a bit of real-time responsiveness
+    // for reliability — which is the right trade for a read-only archive
+    // site that doesn't use onSnapshot listeners at all.
+    firestore = initializeFirestoreSDK(app, {
+      experimentalForceLongPolling: true,
+    });
   }
 
   return firestore;
