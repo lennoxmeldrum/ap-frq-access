@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// Firestore security rules for the shared `frqs` collection.
+//
+// This file is deployed alongside the access site but governs access for
+// both the access site (read-only) and the three generators (create-only).
+// The rules intentionally forbid update + delete so the archive is
+// append-only from the client — bad docs must be deleted manually from the
+// Firebase console.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /frqs/{docId} {
+      // Any signed-in user (including anonymous visitors on the access site)
+      // can read archived FRQs.
+      allow read: if request.auth != null;
+
+      // Generators may create new FRQ docs. Every new doc must carry a
+      // `subject` string and a `metadata.frqType` string so the access
+      // site's filters continue to work.
+      allow create: if request.auth != null
+        && request.resource.data.subject is string
+        && request.resource.data.metadata.frqType is string;
+
+      // The archive is append-only. Never allow mutation or deletion from
+      // the client — only server-side admin tools (the backfill script,
+      // manual console edits) should touch existing docs.
+      allow update, delete: if false;
+    }
+  }
+}

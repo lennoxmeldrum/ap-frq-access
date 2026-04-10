@@ -1,0 +1,23 @@
+rules_version = '2';
+
+// Storage security rules for the FRQ archive bucket.
+//
+// Generators upload PDFs to `frq-archive/<filename>.pdf`. The access site
+// only reads. As with Firestore, deletes are forbidden from the client
+// so bad PDFs must be cleaned up manually in the console.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /frq-archive/{allPaths=**} {
+      // Signed-in users (incl. anonymous access site visitors) can read.
+      allow read: if request.auth != null;
+
+      // Generators can write PDFs up to 20 MB. Content-type must be
+      // application/pdf so the bucket stays clean.
+      allow write: if request.auth != null
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.size < 20 * 1024 * 1024;
+
+      allow delete: if false;
+    }
+  }
+}
