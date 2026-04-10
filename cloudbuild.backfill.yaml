@@ -1,25 +1,46 @@
-# One-shot Cloud Build config for the legacy `subject` field backfill.
+# One-shot Cloud Build config for a manual Firestore backfill script.
+#
+# This config is intentionally parameterized: you pick which script to
+# run via the `_BACKFILL_SCRIPT` substitution, so the same trigger can
+# be reused for multiple one-off backfills without editing code.
+#
+# Available scripts in this repo:
+#   scripts/backfill-subject-field.ts
+#     — Adds a `subject` field to legacy docs missing one. Probably
+#       already run once; keep until you're sure every doc has it.
+#
+#   scripts/backfill-actual-topics.ts   (default)
+#     — Parses the topic list out of each doc's storagePath filename
+#       and writes it back to `metadata.actualSubTopics` for docs
+#       whose actualSubTopics is empty. Fixes the "Topics: —" and
+#       "Units: Random" columns on the access site for legacy docs.
 #
 # How to use:
-#   1. In the Google Cloud Console → Cloud Build → Triggers, create a new
-#      trigger called "ap-frq-access-backfill":
+#   1. In Google Cloud Console → Cloud Build → Triggers, create a
+#      manual trigger called "ap-frq-access-backfill":
 #        - Event:  Manual invocation
-#        - Source: the ap-frq-access repo, any branch (the branch only
-#                  affects which copy of backfill-subject-field.ts runs)
+#        - Source: the ap-frq-access repo, any branch
 #        - Configuration: Cloud Build configuration file (yaml)
 #        - Location: Repository → `cloudbuild.backfill.yaml`
+#
 #   2. Grant the Cloud Build service account
-#      (<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com) the
-#      "Cloud Datastore User" role on this project so it can read and
-#      update docs in the `frqs` collection.
-#   3. Optionally dry-run first: add `_DRY_RUN=--dry-run` as a substitution
-#      override when you click "Run trigger". This will print what would
-#      change without writing anything.
-#   4. Click "Run trigger" once for a real run. Watch the build log — you
-#      should see a summary of how many docs were updated per subject.
-#   5. Verify the subject card counts on the deployed access site, then
-#      delete the trigger and `scripts/backfill-subject-field.ts` from the
-#      repo so it can never run again by accident.
+#      (Default compute service account on this project) the
+#      "Cloud Datastore User" role so it can read and update docs in
+#      the `frqs` collection.
+#
+#   3. When clicking "Run trigger", override the substitution
+#      variables for the specific backfill you want:
+#
+#        _BACKFILL_SCRIPT=scripts/backfill-actual-topics.ts
+#        _DRY_RUN=--dry-run                           (preview first)
+#
+#      Then again with:
+#        _BACKFILL_SCRIPT=scripts/backfill-actual-topics.ts
+#        _DRY_RUN=                                    (real run)
+#
+#   4. Verify the Topics / Units columns on the deployed access site
+#      look correct, then delete this file, the scripts it points at,
+#      and the trigger itself so nothing can run again by accident.
 
 steps:
   - name: 'node:20'
@@ -31,14 +52,16 @@ steps:
         echo "Installing firebase-admin + tsx for the one-shot backfill…"
         npm init -y >/dev/null
         npm install --silent firebase-admin@12 tsx@4
-        echo "Running scripts/backfill-subject-field.ts ${_DRY_RUN}"
-        npx tsx scripts/backfill-subject-field.ts ${_DRY_RUN}
+        echo "Running ${_BACKFILL_SCRIPT} ${_DRY_RUN}"
+        npx tsx ${_BACKFILL_SCRIPT} ${_DRY_RUN}
     env:
       - 'GOOGLE_CLOUD_PROJECT=${_FIREBASE_PROJECT_ID}'
 
-# Substitutions — override `_DRY_RUN` to `--dry-run` for a safe preview.
+# Substitutions — override `_BACKFILL_SCRIPT` to pick which backfill to
+# run, and `_DRY_RUN` to `--dry-run` for a safe preview.
 substitutions:
   _FIREBASE_PROJECT_ID: 'unique-sentinel-423412-q3'
+  _BACKFILL_SCRIPT: 'scripts/backfill-actual-topics.ts'
   _DRY_RUN: ''
 
 options:
