@@ -1,0 +1,45 @@
+# One-shot Cloud Build config for the legacy `subject` field backfill.
+#
+# How to use:
+#   1. In the Google Cloud Console → Cloud Build → Triggers, create a new
+#      trigger called "ap-frq-access-backfill":
+#        - Event:  Manual invocation
+#        - Source: the ap-frq-access repo, any branch (the branch only
+#                  affects which copy of backfill-subject-field.ts runs)
+#        - Configuration: Cloud Build configuration file (yaml)
+#        - Location: Repository → `cloudbuild.backfill.yaml`
+#   2. Grant the Cloud Build service account
+#      (<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com) the
+#      "Cloud Datastore User" role on this project so it can read and
+#      update docs in the `frqs` collection.
+#   3. Optionally dry-run first: add `_DRY_RUN=--dry-run` as a substitution
+#      override when you click "Run trigger". This will print what would
+#      change without writing anything.
+#   4. Click "Run trigger" once for a real run. Watch the build log — you
+#      should see a summary of how many docs were updated per subject.
+#   5. Verify the subject card counts on the deployed access site, then
+#      delete the trigger and `scripts/backfill-subject-field.ts` from the
+#      repo so it can never run again by accident.
+
+steps:
+  - name: 'node:20'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        echo "Installing firebase-admin + tsx for the one-shot backfill…"
+        npm init -y >/dev/null
+        npm install --silent firebase-admin@12 tsx@4
+        echo "Running scripts/backfill-subject-field.ts ${_DRY_RUN}"
+        npx tsx scripts/backfill-subject-field.ts ${_DRY_RUN}
+    env:
+      - 'GOOGLE_CLOUD_PROJECT=${_FIREBASE_PROJECT_ID}'
+
+# Substitutions — override `_DRY_RUN` to `--dry-run` for a safe preview.
+substitutions:
+  _FIREBASE_PROJECT_ID: 'unique-sentinel-423412-q3'
+  _DRY_RUN: ''
+
+options:
+  logging: CLOUD_LOGGING_ONLY

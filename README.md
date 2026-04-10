@@ -57,24 +57,63 @@ variables:
 Unlike the generators, this service does **not** need the `FRQ` Gemini
 API key secret binding.
 
-## Security rules
+## Security rules and indexes
 
-`firestore.rules` and `storage.rules` lock the archive to read-only for
-all clients and create-only (not update / delete) for the generators.
-Deploy with:
+`firestore.rules`, `storage.rules`, and `firestore.indexes.json` are
+deployed automatically by the main `cloudbuild.yaml` on every Cloud
+Build run. A final step in `cloudbuild.yaml` runs
+`npx firebase-tools deploy --only firestore:rules,firestore:indexes,storage`
+so whatever lives at HEAD is always what's live in the Firebase project.
 
-```bash
-firebase deploy --only firestore:rules,storage
-firebase deploy --only firestore:indexes
-```
+**One-time IAM grant required:** the Cloud Build service account
+(`<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com`) needs these roles on
+the Firebase project before the first build:
+
+- **Firebase Rules Admin** — to publish Firestore + Storage rules
+- **Cloud Datastore Index Admin** — to create the composite indexes
+
+Grant both once in the Cloud Console → IAM & Admin → IAM page, and
+every subsequent push auto-updates the rules and indexes.
+
+### Manual fallback (no Cloud Build)
+
+If you'd rather publish the rules by hand from the Firebase Console
+instead of granting the IAM roles above, paste the contents of the
+files into these places and click Publish:
+
+- **Firestore rules** → Firestore Database → Rules tab ← `firestore.rules`
+- **Storage rules** → Storage → Rules tab ← `storage.rules`
+- **Firestore indexes** → either paste into Firestore → Indexes →
+  Composite → Add index, or just visit the access site and click the
+  auto-generated "create index" link Firestore prints in the browser
+  console the first time a query needs it.
 
 ## One-time backfill
 
 `scripts/backfill-subject-field.ts` adds the `subject` field to legacy
 FRQ docs written before the generators started stamping `subject`
-themselves. See the header comment in the script for usage. Run it once
-after deploying the rules and generator updates, verify counts, then
-delete the script.
+themselves. It is driven by `cloudbuild.backfill.yaml`, which is meant
+to run as a **separate, manually-invoked** Cloud Build trigger — not on
+every push.
+
+Steps (UI only — no CLI):
+
+1. In Cloud Console → Cloud Build → Triggers, create a new trigger
+   `ap-frq-access-backfill`:
+   - Event: **Manual invocation**
+   - Source: this repo, any branch
+   - Configuration: Cloud Build configuration file (yaml)
+   - Location: Repository → `cloudbuild.backfill.yaml`
+2. Grant the Cloud Build service account the **Cloud Datastore User**
+   role on this project so it can read + update docs in `frqs`.
+3. (Optional dry run) Click "Run trigger" and override the
+   `_DRY_RUN` substitution to `--dry-run`. The build log will print
+   how many docs would be updated per subject without writing.
+4. Click "Run trigger" with no override to do the real backfill.
+5. Verify the counts on each subject card on the deployed access site,
+   then delete the trigger AND `scripts/backfill-subject-field.ts` and
+   `cloudbuild.backfill.yaml` in a follow-up commit so this can never
+   run again by accident.
 
 ## Adding a new subject
 

@@ -12,23 +12,29 @@
  * `AP CHEM FRQ`, `AP PSYCH FRQ`), and writes `subject` via a batched
  * update. Docs that already have a `subject` are left untouched.
  *
- * Usage
- * -----
- *   1. Install deps (ap-frq-access has no dev dep on firebase-admin; install
- *      it locally just to run this script):
- *        npm install --no-save firebase-admin tsx
+ * Usage (no CLI required)
+ * -----------------------
+ * Run this script as a one-shot Cloud Build trigger using
+ * `cloudbuild.backfill.yaml` at the repo root. That config installs
+ * firebase-admin + tsx inside a Cloud Build `node:20` step and executes
+ * this file against the shared Firebase project using the Cloud Build
+ * service account's default credentials (which is why we use
+ * `admin.credential.applicationDefault()` below).
  *
- *   2. Download a service account JSON from the Firebase console and set:
- *        export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+ * Summary of the Cloud Build flow:
+ *   1. Create a manual Cloud Build trigger pointing at
+ *      `cloudbuild.backfill.yaml`.
+ *   2. Grant the Cloud Build service account the "Cloud Datastore User"
+ *      role so it can read and update docs in the `frqs` collection.
+ *   3. (Optional) Click "Run trigger" with the substitution override
+ *      `_DRY_RUN=--dry-run` to preview the changes without writing.
+ *   4. Click "Run trigger" for the real run.
+ *   5. Verify subject counts on the deployed access site, then delete
+ *      the trigger AND this script so it can never run again by
+ *      accident.
  *
- *   3. Dry run first (NO writes):
- *        npx tsx scripts/backfill-subject-field.ts --dry-run
- *
- *   4. Real run:
- *        npx tsx scripts/backfill-subject-field.ts
- *
- *   5. Verify counts in the Firebase console / access site, then DELETE this
- *      script — it should only ever be run once.
+ * See `cloudbuild.backfill.yaml` in the repo root for the exact
+ * click-path and IAM requirements.
  */
 
 import admin from 'firebase-admin';
