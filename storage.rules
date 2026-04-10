@@ -1,23 +1,36 @@
 rules_version = '2';
 
-// Storage security rules for the FRQ archive bucket.
+// Storage security rules for the shared GCP project.
 //
-// Generators upload PDFs to `frq-archive/<filename>.pdf`. The access site
-// only reads. As with Firestore, deletes are forbidden from the client
-// so bad PDFs must be cleaned up manually in the console.
+// IMPORTANT: like firestore.rules, this file is deployed from the
+// ap-frq-access repo via the main cloudbuild.yaml on every push, and
+// `firebase deploy --only storage` REPLACES the entire ruleset on the
+// project — it does NOT merge. Every bucket path used by ANY app on
+// this Firebase project must have a matching rule block in this file,
+// otherwise it will be denied by default after the next deploy.
+//
+// If you add a new Storage path for a new app on this project, add a
+// rule block for it here and push.
 service firebase.storage {
   match /b/{bucket}/o {
+
+    // -------------------------------------------------------------
+    // FRQ archive PDFs: written by the three AP Infinite FRQ
+    // Generators, read by the ap-frq-access site.
+    //
+    // Kept permissive for now to match the long-standing behavior
+    // from before the access site existed. Tighten once anonymous
+    // auth is verified working end-to-end.
+    // -------------------------------------------------------------
     match /frq-archive/{allPaths=**} {
-      // Signed-in users (incl. anonymous access site visitors) can read.
-      allow read: if request.auth != null;
-
-      // Generators can write PDFs up to 20 MB. Content-type must be
-      // application/pdf so the bucket stays clean.
-      allow write: if request.auth != null
-        && request.resource.contentType == 'application/pdf'
-        && request.resource.size < 20 * 1024 * 1024;
-
-      allow delete: if false;
+      allow read, write: if true;
     }
+
+    // -------------------------------------------------------------
+    // If your original storage ruleset had rule blocks for other
+    // paths (profile images, uploads, etc.), paste them in this
+    // section before pushing. Storage rules default-deny, so anything
+    // not matched here will stop working after the next deploy.
+    // -------------------------------------------------------------
   }
 }

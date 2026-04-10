@@ -1,30 +1,63 @@
 rules_version = '2';
 
-// Firestore security rules for the shared `frqs` collection.
+// Firestore security rules for the shared GCP project.
 //
-// This file is deployed alongside the access site but governs access for
-// both the access site (read-only) and the three generators (create-only).
-// The rules intentionally forbid update + delete so the archive is
-// append-only from the client — bad docs must be deleted manually from the
-// Firebase console.
+// IMPORTANT: this file is deployed from the ap-frq-access repo via the
+// main cloudbuild.yaml on every push, and `firebase deploy
+// --only firestore:rules` REPLACES the entire ruleset on the project —
+// it does NOT merge. Every collection used by ANY app on this Firebase
+// project must have a matching rule block in this file, otherwise it
+// will be denied by default after the next deploy.
+//
+// If you add a new collection for a new app on this project, add a
+// rule block for it here and push. This is the single source of truth
+// for the whole project's Firestore rules.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /frqs/{docId} {
-      // Any signed-in user (including anonymous visitors on the access site)
-      // can read archived FRQs.
-      allow read: if request.auth != null;
 
-      // Generators may create new FRQ docs. Every new doc must carry a
-      // `subject` string and a `metadata.frqType` string so the access
-      // site's filters continue to work.
-      allow create: if request.auth != null
-        && request.resource.data.subject is string
-        && request.resource.data.metadata.frqType is string;
+    // -------------------------------------------------------------
+    // Shared FRQ archive (written by the AP Infinite FRQ Generators,
+    // read by the ap-frq-access site).
+    //
+    // Kept permissive for now to match the long-standing behavior from
+    // before the access site was introduced. Tighten once anonymous
+    // auth is verified working for the access site and all three
+    // generators (currently blocked on a broken _FIREBASE_API_KEY
+    // substitution in the ap-frq-access Cloud Build trigger).
+    // -------------------------------------------------------------
+    match /frqs/{document=**} {
+      allow read, write: if true;
+    }
 
-      // The archive is append-only. Never allow mutation or deletion from
-      // the client — only server-side admin tools (the backfill script,
-      // manual console edits) should touch existing docs.
+    // -------------------------------------------------------------
+    // Pre-existing collections from other apps on this project.
+    // These rule blocks are preserved verbatim from the ruleset that
+    // was live before ap-frq-access started deploying Firestore rules
+    // through Cloud Build. Do not remove them unless the owning app
+    // is genuinely retired.
+    // -------------------------------------------------------------
+    match /credentials/{username} {
+      allow read: if true;
+      allow create: if true;
       allow update, delete: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    match /astrophysics_progress/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Cat blood sugar readings
+    match /catReadings/{readingId} {
+      allow read, write: if true;
+    }
+
+    // Meta collection for app flags
+    match /meta/{docId} {
+      allow read, write: if true;
     }
   }
 }
