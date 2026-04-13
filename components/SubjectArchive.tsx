@@ -142,6 +142,8 @@ const SortHeader: React.FC<SortHeaderProps> = ({
 //                  per-page only.
 type Source = 'manifest' | 'firestore';
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+
 const SubjectArchive: React.FC = () => {
   const params = useParams<{ subject: string }>();
   const subjectSlug = params.subject as SubjectSlug | undefined;
@@ -166,6 +168,10 @@ const SubjectArchive: React.FC = () => {
   const [frqTypes, setFrqTypes] = useState<string[]>([]);
   const [activeFrqType, setActiveFrqType] = useState<string | null>(null);
 
+  // User-selectable page size. The default matches the legacy
+  // ARCHIVE_PAGE_SIZE so bookmarked links keep feeling the same.
+  const [pageSize, setPageSize] = useState<number>(ARCHIVE_PAGE_SIZE);
+
   // Client-side sort state. On the manifest path this is applied across
   // the full filtered list. On the Firestore path it only re-sorts the
   // currently loaded page in place (cross-page sort would require
@@ -188,6 +194,15 @@ const SubjectArchive: React.FC = () => {
   // Firestore fallback path.
   const trailingCursorRef = useRef<Cursor>(null);
 
+  // Mirror of `pageSize` as a ref so `loadPageFromFirestore` can read
+  // the latest value without having pageSize in its deps array — that
+  // would make the callback reference change on every size change,
+  // which would re-trigger the main load effect and clear the selected
+  // row. With the ref, size changes only rerun the effects that
+  // actually need to (see handlePageSizeChange).
+  const pageSizeRef = useRef(pageSize);
+  pageSizeRef.current = pageSize;
+
   // Load via Firestore: cursor-based pagination, server-side filter.
   const loadPageFromFirestore = useCallback(
     async (cursor: Cursor) => {
@@ -199,7 +214,7 @@ const SubjectArchive: React.FC = () => {
           subject: subjectSlug,
           frqTypeShort: activeFrqType ?? undefined,
           cursor,
-          pageSize: ARCHIVE_PAGE_SIZE,
+          pageSize: pageSizeRef.current,
         });
         setItems(result.items);
         setHasMore(result.hasMore);
@@ -277,19 +292,49 @@ const SubjectArchive: React.FC = () => {
     );
   }, [subject]);
 
-  const handleNext = async () => {
-    if (loading) return;
+  // The full sorted list — only meaningful on the manifest path, where
+  // we have every doc client-side. On the Firestore path this is empty
+  // and we sort the per-page `items` array instead (see `pagedItems`).
+  const sortedAllItems = useMemo(() => {
+    const copy = [...allItems];
+    copy.sort((a, b) => compareItems(a, b, sortColumn, sortDirection));
+    return copy;
+  }, [allItems, sortColumn, sortDirection]);
+
+  // What the table actually renders. On the manifest path this is the
+  // current page slice of the fully sorted list; on the Firestore path
+  // it's a sort of the page that was already returned.
+  const pagedItems = useMemo(() => {
     if (source === 'manifest') {
-      if (!hasMore) return;
-      setCurrentPage((p) => p + 1);
+      const start = currentPage * pageSize;
+      return sortedAllItems.slice(start, start + pageSize);
+    }
+    const copy = [...items];
+    copy.sort((a, b) => compareItems(a, b, sortColumn, sortDirection));
+    return copy;
+  }, [source, sortedAllItems, currentPage, pageSize, items, sortColumn, sortDirection]);
+
+  // Manifest path: derive `hasMore` and total page count from the
+  // sorted full list. Firestore path: `hasMore` already came back from
+  // the page query, total pages are unknown without a separate count
+  // query. "Jump to last" is therefore only meaningful on the manifest
+  // path; on Firestore the last-page button stays disabled.
+  const totalPages = source === 'manifest'
+    ? Math.max(1, Math.ceil(sortedAllItems.length / pageSize))
+    : null;
+  const effectiveHasMore = source === 'manifest'
+    ? (currentPage + 1) * pageSize < sortedAllItems.length
+    : hasMore;
+
+  const handleFirst = async () => {
+    if (currentPage === 0 || loading) return;
+    if (source === 'manifest') {
+      setCurrentPage(0);
       return;
     }
-    if (!hasMore) return;
-    const nextCursor = trailingCursorRef.current;
-    if (!nextCursor) return;
-    setCursorStack((prev) => [...prev, nextCursor]);
-    setCurrentPage((p) => p + 1);
-    await loadPageFromFirestore(nextCursor);
+    setCursorStack([null]);
+    setCurrentPage(0);
+    await loadPageFromFirestore(null);
   };
 
   const handlePrev = async () => {
@@ -305,37 +350,50 @@ const SubjectArchive: React.FC = () => {
     await loadPageFromFirestore(cursor);
   };
 
-  // The full sorted list — only meaningful on the manifest path, where
-  // we have every doc client-side. On the Firestore path this is empty
-  // and we sort the per-page `items` array instead (see `pagedItems`).
-  const sortedAllItems = useMemo(() => {
-    const copy = [...allItems];
-    copy.sort((a, b) => compareItems(a, b, sortColumn, sortDirection));
-    return copy;
-  }, [allItems, sortColumn, sortDirection]);
-
-  // What the table actually renders. On the manifest path this is the
-  // current page slice of the fully sorted list; on the Firestore path
-  // it's a sort of the page that was already returned.
-  const pagedItems = useMemo(() => {
+  const handleNext = async () => {
+    if (loading) return;
     if (source === 'manifest') {
-      const start = currentPage * ARCHIVE_PAGE_SIZE;
-      return sortedAllItems.slice(start, start + ARCHIVE_PAGE_SIZE);
+      if (!effectiveHasMore) return;
+      setCurrentPage((p) => p + 1);
+      return;
     }
-    const copy = [...items];
-    copy.sort((a, b) => compareItems(a, b, sortColumn, sortDirection));
-    return copy;
-  }, [source, sortedAllItems, currentPage, items, sortColumn, sortDirection]);
+    if (!hasMore) return;
+    const nextCursor = trailingCursorRef.current;
+    if (!nextCursor) return;
+    setCursorStack((prev) => [...prev, nextCursor]);
+    setCurrentPage((p) => p + 1);
+    await loadPageFromFirestore(nextCursor);
+  };
 
-  // Manifest path: derive `hasMore` and total page count from the
-  // sorted full list. Firestore path: `hasMore` already came back from
-  // the page query, total pages are unknown.
-  const totalPages = source === 'manifest'
-    ? Math.max(1, Math.ceil(sortedAllItems.length / ARCHIVE_PAGE_SIZE))
-    : null;
-  const effectiveHasMore = source === 'manifest'
-    ? (currentPage + 1) * ARCHIVE_PAGE_SIZE < sortedAllItems.length
-    : hasMore;
+  // Only supported on the manifest path. Firestore's cursor-based
+  // pagination has no O(1) way to jump to the last page without
+  // walking the intermediate pages.
+  const handleLast = () => {
+    if (source !== 'manifest' || loading || totalPages === null) return;
+    const lastIndex = totalPages - 1;
+    if (currentPage >= lastIndex) return;
+    setCurrentPage(lastIndex);
+  };
+
+  const handlePageSizeChange = async (nextSize: number) => {
+    if (nextSize === pageSize) return;
+    setPageSize(nextSize);
+    // Sync the ref before the async call below so the in-flight
+    // Firestore query picks up the new page size without waiting on
+    // React's next render cycle.
+    pageSizeRef.current = nextSize;
+    // Reset to the first page — holding position across size changes
+    // usually surprises more than it helps, and the current slice
+    // index wouldn't translate cleanly under a different page size.
+    setCurrentPage(0);
+    if (source === 'firestore') {
+      setCursorStack([null]);
+      await loadPageFromFirestore(null);
+    }
+    // Manifest path needs no reload — `pagedItems` is a slice of an
+    // in-memory array and the new `pageSize` flows through the memo
+    // on the next render.
+  };
 
   // If the user changes the sort while on a non-first page of the
   // manifest path, the slice they were looking at no longer makes
@@ -493,28 +551,86 @@ const SubjectArchive: React.FC = () => {
             </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm">
-              <div className="text-gray-500">
-                Page {currentPage + 1}
-                {totalPages !== null && ` of ${totalPages}`}
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm">
+              <div className="flex items-center gap-2 text-gray-600">
+                <label htmlFor="page-size" className="text-gray-500">
+                  Rows per page
+                </label>
+                <select
+                  id="page-size"
+                  value={pageSize}
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                  disabled={loading}
+                  className="rounded-md border border-gray-300 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handlePrev}
-                  disabled={currentPage === 0 || loading}
-                  className="px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  onClick={handleNext}
-                  disabled={!effectiveHasMore || loading}
-                  className="px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Next
-                </button>
+
+              <div className="flex items-center gap-3">
+                <div className="text-gray-500">
+                  Page {currentPage + 1}
+                  {totalPages !== null && ` of ${totalPages}`}
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={handleFirst}
+                    disabled={currentPage === 0 || loading}
+                    aria-label="First page"
+                    title="First page"
+                    className="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    «
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePrev}
+                    disabled={currentPage === 0 || loading}
+                    aria-label="Previous page"
+                    title="Previous page"
+                    className="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    disabled={!effectiveHasMore || loading}
+                    aria-label="Next page"
+                    title="Next page"
+                    className="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ›
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLast}
+                    disabled={
+                      loading ||
+                      source !== 'manifest' ||
+                      totalPages === null ||
+                      currentPage >= totalPages - 1
+                    }
+                    aria-label={
+                      source === 'manifest'
+                        ? 'Last page'
+                        : 'Last page (unavailable on this view)'
+                    }
+                    title={
+                      source === 'manifest'
+                        ? 'Last page'
+                        : 'Last page (unavailable while reading from Firestore directly)'
+                    }
+                    className="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    »
+                  </button>
+                </div>
               </div>
             </div>
           </div>
