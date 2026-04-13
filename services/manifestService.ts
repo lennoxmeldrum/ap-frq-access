@@ -34,6 +34,11 @@ interface ManifestItem {
   };
   storagePath: string | null;
   createdAt: string | null;
+  // Optional on the client side — manifests written before cost
+  // tracking shipped don't have it, and neither do docs written by
+  // generators that haven't picked up services/pricing.ts yet.
+  // Consumers fall back to 0 via `?? 0`.
+  totalCostUsd?: number;
 }
 
 export interface SubjectManifest {
@@ -42,6 +47,9 @@ export interface SubjectManifest {
   generatedAt: string;
   count: number;
   distinctFrqTypes: string[];
+  // Aggregate across items. Same "optional on old manifests" story
+  // as the per-item field.
+  totalCostUsd?: number;
   items: ManifestItem[];
 }
 
@@ -152,4 +160,5 @@ export const manifestItemToArchivedFRQ = (
   metadata: item.metadata,
   storagePath: item.storagePath ?? null,
   createdAt: parseDate(item.createdAt),
+  totalCostUsd: item.totalCostUsd ?? 0,
 });

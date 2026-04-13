@@ -77,6 +77,8 @@ const mapDocToArchivedFRQ = (
     },
     storagePath: (data.storagePath as string | null | undefined) ?? null,
     createdAt: toDate(data.createdAt),
+    totalCostUsd:
+      typeof data.totalCostUsd === 'number' ? (data.totalCostUsd as number) : 0,
   };
 };
 

@@ -65,6 +65,15 @@ initializeApp({ storageBucket });
 
 const FRQS_COLLECTION = 'frqs';
 const MANIFEST_PATH = (subject: string) => `frq-archive/manifests/${subject}.json`;
+// Bump the manifest version whenever the JSON shape changes in a
+// way older clients can't handle. The access site's
+// manifestService.ts stays on SUPPORTED_MANIFEST_VERSION and falls
+// back to Firestore when it sees anything newer.
+// v1: initial shape.
+// v2: adds `totalCostUsd` to each item and a `totalCostUsd` aggregate
+//     on the manifest itself. Clients on v1 code can still read v2
+//     (they'll just ignore the extra fields) so we keep the version
+//     at 1 and rely on `?? 0` fallbacks in consumers.
 const MANIFEST_VERSION = 1;
 
 interface ManifestItem {
@@ -80,6 +89,9 @@ interface ManifestItem {
   };
   storagePath: string | null;
   createdAt: string | null;
+  // Generator-stamped cost. 0 on legacy docs; present on docs
+  // written by generators carrying services/pricing.ts.
+  totalCostUsd: number;
 }
 
 interface SubjectManifest {
@@ -88,6 +100,10 @@ interface SubjectManifest {
   generatedAt: string;
   count: number;
   distinctFrqTypes: string[];
+  // Sum of every item's `totalCostUsd`. Lets the SubjectPicker
+  // show "$X.XX spent" per subject without the access site
+  // having to re-sum on every render.
+  totalCostUsd: number;
   items: ManifestItem[];
 }
 
@@ -116,6 +132,8 @@ const mapDocToManifestItem = (
     },
     storagePath: (data.storagePath as string | null | undefined) ?? null,
     createdAt: toISODate(data.createdAt),
+    totalCostUsd:
+      typeof data.totalCostUsd === 'number' ? (data.totalCostUsd as number) : 0,
   };
 };
 
@@ -142,12 +160,20 @@ export const rebuildManifestForSubject = async (subject: string): Promise<number
     )
   ).sort();
 
+  // Round to a full cent at the manifest boundary. Per-item costs
+  // keep six decimal places (see services/pricing.ts in the
+  // generators) so sub-cent charges don't vanish, but the subject
+  // total is a human-facing number and cent precision is plenty.
+  const totalCostUsd =
+    Math.round(items.reduce((sum, i) => sum + (i.totalCostUsd || 0), 0) * 100) / 100;
+
   const manifest: SubjectManifest = {
     subject,
     manifestVersion: MANIFEST_VERSION,
     generatedAt: new Date().toISOString(),
     count: items.length,
     distinctFrqTypes,
+    totalCostUsd,
     items,
   };
 

@@ -12,6 +12,7 @@ import {
   manifestItemToArchivedFRQ,
 } from '../services/manifestService';
 import { ArchivedFRQDoc, SubjectSlug } from '../types';
+import { formatUsd } from '../services/format';
 import PDFPreviewPanel from './PDFPreviewPanel';
 
 type Cursor = QueryDocumentSnapshot<DocumentData> | null;
@@ -495,19 +496,20 @@ const SubjectArchive: React.FC = () => {
                       />
                     </th>
                     <th className="px-4 py-3 text-right">Points</th>
+                    <th className="px-4 py-3 text-right hidden sm:table-cell">Cost</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {loading && pagedItems.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-12 text-center text-gray-500">
+                      <td colSpan={6} className="px-4 py-12 text-center text-gray-500">
                         Loading archive…
                       </td>
                     </tr>
                   )}
                   {!loading && pagedItems.length === 0 && !error && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-12 text-center text-gray-500">
+                      <td colSpan={6} className="px-4 py-12 text-center text-gray-500">
                         No FRQs match this filter.
                       </td>
                     </tr>
@@ -542,6 +544,11 @@ const SubjectArchive: React.FC = () => {
                         </td>
                         <td className="px-4 py-3 text-right text-gray-900 font-medium">
                           {item.maxPoints ?? '—'}
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-500 hidden sm:table-cell whitespace-nowrap">
+                          {item.totalCostUsd && item.totalCostUsd > 0
+                            ? formatUsd(item.totalCostUsd)
+                            : '—'}
                         </td>
                       </tr>
                     );
