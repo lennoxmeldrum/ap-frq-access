@@ -109,6 +109,13 @@ steps:
   # 4. Seed the manifests by calling the deployed function with an
   #    empty body. The function auto-discovers subjects, so this
   #    needs no maintenance when subjects are added or removed.
+  #
+  #    Note: `gcloud auth print-identity-token` does NOT work from
+  #    inside Cloud Build — the build SA's credentials are
+  #    access-token shaped, not identity-token shaped. We instead
+  #    ask the metadata server directly for an ID token with the
+  #    function URL as the audience; that endpoint always works
+  #    from any GCE-style compute (including Cloud Build workers).
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -119,13 +126,21 @@ steps:
           --gen2 --region=${_REGION} --project=${_FIREBASE_PROJECT_ID} \
           --format='value(serviceConfig.uri)')"
         echo "Seeding manifests via $${URL}"
-        TOKEN="$(gcloud auth print-identity-token --audiences=$${URL})"
-        curl --fail-with-body -X POST \
+        TOKEN="$(curl -sSf -H 'Metadata-Flavor: Google' \
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=$${URL}")"
+        HTTP_STATUS="$(curl -sS -o /tmp/seed-response.json -w '%{http_code}' \
+          -X POST \
           -H "Authorization: Bearer $${TOKEN}" \
-          -H "Content-Type: application/json" \
+          -H 'Content-Type: application/json' \
           -d '{}' \
-          "$${URL}"
+          "$${URL}")"
+        echo "Response (HTTP $${HTTP_STATUS}):"
+        cat /tmp/seed-response.json
         echo
+        if [ "$${HTTP_STATUS}" != "200" ]; then
+          echo "Seed failed with HTTP $${HTTP_STATUS}"
+          exit 1
+        fi
 
 substitutions:
   _FIREBASE_PROJECT_ID: 'unique-sentinel-423412-q3'
