@@ -96,6 +96,7 @@ steps:
       - '--trigger-location=${_REGION}'
       - '--memory=512Mi'
       - '--timeout=120s'
+      - '--set-env-vars=FIREBASE_STORAGE_BUCKET=${_STORAGE_BUCKET}'
       - '--project=${_FIREBASE_PROJECT_ID}'
 
   # 3. Deploy the private HTTP recovery hatch.
@@ -114,6 +115,7 @@ steps:
       - '--no-allow-unauthenticated'
       - '--memory=512Mi'
       - '--timeout=540s'
+      - '--set-env-vars=FIREBASE_STORAGE_BUCKET=${_STORAGE_BUCKET}'
       - '--project=${_FIREBASE_PROJECT_ID}'
 
   # 4. Seed the manifests by calling the deployed function with an
@@ -163,6 +165,11 @@ substitutions:
   # same region the Cloud Run web apps deploy to — so every function
   # that cares about Firestore events has to go there too.
   _REGION: 'us-west1'
+  # The bucket the function writes manifest JSON to. When we deploy
+  # via gcloud (not firebase-tools), the FIREBASE_CONFIG env var
+  # that normally carries this doesn't get set, so we pass it
+  # explicitly as FIREBASE_STORAGE_BUCKET.
+  _STORAGE_BUCKET: 'unique-sentinel-423412-q3.firebasestorage.app'
 
 options:
   logging: CLOUD_LOGGING_ONLY
