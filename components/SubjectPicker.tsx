@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { SUBJECTS } from '../constants';
 import { getSubjectFRQCount } from '../services/firestoreService';
+import { getSubjectManifest } from '../services/manifestService';
 import { SubjectInfo, SubjectSlug } from '../types';
 
 type CountState = Record<SubjectSlug, number | null>;
@@ -70,12 +71,17 @@ const SubjectPicker: React.FC = () => {
     let cancelled = false;
 
     (async () => {
-      // Fire all subject count queries in parallel — each is a cheap
-      // aggregate count, and the UI can progressively render as results
-      // come in.
+      // Fire all subject lookups in parallel. Each one tries the
+      // pre-built manifest from Storage first (one HTTP GET, no
+      // Firestore round-trip) and falls back to Firestore's aggregate
+      // count if the manifest isn't there yet — covers the window
+      // between deploying the rebuild function and the first FRQ
+      // write that materializes the file.
       const results = await Promise.all(
         SUBJECTS.map(async (subject) => {
-          const count = await getSubjectFRQCount(subject.slug);
+          const manifest = await getSubjectManifest(subject.slug);
+          const count =
+            manifest?.count ?? (await getSubjectFRQCount(subject.slug));
           return [subject.slug, count] as const;
         })
       );
