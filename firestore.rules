@@ -15,6 +15,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    match /boomers_campaigns/{document=**} {
+      allow read, write: if true;
+    }
+
     // -------------------------------------------------------------
     // Shared FRQ archive (written by the AP Infinite FRQ Generators,
     // read by the ap-frq-access site).
