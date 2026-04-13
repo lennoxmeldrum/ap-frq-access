@@ -37,8 +37,18 @@
 #                                            trigger subscription)
 #        - Service Account User             (so it can act-as the
 #                                            runtime SA below)
-#        - Cloud Run Invoker                (so step 3 can call the
+#        - Cloud Run Invoker                (so step 4 can call the
 #                                            private HTTP function)
+#        - Service Account Token Creator    (on the SA itself — the
+#                                            seed step impersonates
+#                                            itself to mint an ID
+#                                            token for the invoke
+#                                            call. Cloud Build
+#                                            workers can't get an
+#                                            ID token from the
+#                                            metadata server by
+#                                            default, hence this
+#                                            extra grant.)
 #
 #   3. Grant the function's runtime service account
 #      (the same default compute SA, unless you override it) these
@@ -110,12 +120,13 @@ steps:
   #    empty body. The function auto-discovers subjects, so this
   #    needs no maintenance when subjects are added or removed.
   #
-  #    Note: `gcloud auth print-identity-token` does NOT work from
-  #    inside Cloud Build — the build SA's credentials are
-  #    access-token shaped, not identity-token shaped. We instead
-  #    ask the metadata server directly for an ID token with the
-  #    function URL as the audience; that endpoint always works
-  #    from any GCE-style compute (including Cloud Build workers).
+  #    Note: Cloud Build workers can't retrieve ID tokens directly
+  #    from the metadata server even when the trigger is configured
+  #    with a user-specified SA — the identity endpoint returns 404.
+  #    Workaround: impersonate the build SA to mint a scoped ID
+  #    token via the IAM Credentials API. This requires the build
+  #    SA to have `iam.serviceAccountTokenCreator` on itself, which
+  #    is listed in the IAM section at the top of this file.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -125,9 +136,12 @@ steps:
         URL="$(gcloud functions describe rebuildAllManifests \
           --gen2 --region=${_REGION} --project=${_FIREBASE_PROJECT_ID} \
           --format='value(serviceConfig.uri)')"
-        echo "Seeding manifests via $${URL}"
-        TOKEN="$(curl -sSf -H 'Metadata-Flavor: Google' \
-          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=$${URL}")"
+        SA_EMAIL="$(curl -sSf -H 'Metadata-Flavor: Google' \
+          'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email')"
+        echo "Seeding manifests via $${URL} (impersonating $${SA_EMAIL})"
+        TOKEN="$(gcloud auth print-identity-token \
+          --impersonate-service-account=$${SA_EMAIL} \
+          --audiences=$${URL})"
         HTTP_STATUS="$(curl -sS -o /tmp/seed-response.json -w '%{http_code}' \
           -X POST \
           -H "Authorization: Bearer $${TOKEN}" \
