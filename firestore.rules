@@ -2,18 +2,27 @@ rules_version = '2';
 
 // Firestore security rules for the shared GCP project.
 //
-// IMPORTANT: this file is deployed from the ap-frq-access repo via the
-// main cloudbuild.yaml on every push, and `firebase deploy
-// --only firestore:rules` REPLACES the entire ruleset on the project —
+// NOTE: this file is kept here as the source of truth for the project's
+// Firestore rules, but it is NOT auto-deployed by Cloud Build.
+// To update the live ruleset, deploy manually:
+//
+//   firebase deploy --only firestore:rules,firestore:indexes,storage \
+//     --project unique-sentinel-423412-q3
+//
+// `firebase deploy --only firestore:rules` REPLACES the entire ruleset —
 // it does NOT merge. Every collection used by ANY app on this Firebase
-// project must have a matching rule block in this file, otherwise it
-// will be denied by default after the next deploy.
+// project must have a matching rule block here, otherwise it will be
+// denied by default after the next manual deploy.
 //
 // If you add a new collection for a new app on this project, add a
-// rule block for it here and push. This is the single source of truth
-// for the whole project's Firestore rules.
+// rule block for it here. This is the single source of truth for the
+// whole project's Firestore rules.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    match /boomers_campaigns/{document=**} {
+      allow read, write: if true;
+    }
 
     // -------------------------------------------------------------
     // Shared FRQ archive (written by the AP Infinite FRQ Generators,
