@@ -47,7 +47,21 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 
-initializeApp();
+// The storage bucket is normally auto-populated via the
+// FIREBASE_CONFIG env var that firebase-tools injects at deploy
+// time. We deploy with gcloud instead, so that env var never gets
+// set — pass the bucket in explicitly from a FIREBASE_STORAGE_BUCKET
+// env var (wired up in cloudbuild.functions.yaml) and fail loudly
+// if it's missing so we don't silently write to the wrong bucket.
+const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
+if (!storageBucket) {
+  throw new Error(
+    'FIREBASE_STORAGE_BUCKET env var is required. Set it on the ' +
+      'function deploy in cloudbuild.functions.yaml.'
+  );
+}
+
+initializeApp({ storageBucket });
 
 const FRQS_COLLECTION = 'frqs';
 const MANIFEST_PATH = (subject: string) => `frq-archive/manifests/${subject}.json`;
