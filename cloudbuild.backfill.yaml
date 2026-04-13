@@ -15,6 +15,14 @@
 #       whose actualSubTopics is empty. Fixes the "Topics: —" and
 #       "Units: Random" columns on the access site for legacy docs.
 #
+#   scripts/rebuild-all-manifests.ts
+#     — Writes/rebuilds the per-subject manifest JSON in Storage at
+#       frq-archive/manifests/<subject>.json. Run this ONCE after
+#       deploying the rebuildManifestOnFrqWrite Cloud Function for
+#       the first time, so the access site has manifests to read
+#       before any new FRQ writes happen. Safe to re-run any time
+#       (idempotent).
+#
 # How to use:
 #   1. In Google Cloud Console → Cloud Build → Triggers, create a
 #      manual trigger called "ap-frq-access-backfill":
@@ -24,9 +32,12 @@
 #        - Location: Repository → `cloudbuild.backfill.yaml`
 #
 #   2. Grant the Cloud Build service account
-#      (Default compute service account on this project) the
-#      "Cloud Datastore User" role so it can read and update docs in
-#      the `frqs` collection.
+#      (Default compute service account on this project):
+#        - "Cloud Datastore User" — read + update docs in `frqs`.
+#        - "Storage Object Admin" on the Firebase storage bucket —
+#          required by `rebuild-all-manifests.ts` to write the
+#          per-subject manifest JSON files. Not needed by the
+#          Firestore-only backfills, but cheapest to grant once.
 #
 #   3. When clicking "Run trigger", override the substitution
 #      variables for the specific backfill you want:
@@ -56,11 +67,13 @@ steps:
         npx tsx ${_BACKFILL_SCRIPT} ${_DRY_RUN}
     env:
       - 'GOOGLE_CLOUD_PROJECT=${_FIREBASE_PROJECT_ID}'
+      - 'FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}'
 
 # Substitutions — override `_BACKFILL_SCRIPT` to pick which backfill to
 # run, and `_DRY_RUN` to `--dry-run` for a safe preview.
 substitutions:
   _FIREBASE_PROJECT_ID: 'unique-sentinel-423412-q3'
+  _FIREBASE_STORAGE_BUCKET: 'unique-sentinel-423412-q3.firebasestorage.app'
   _BACKFILL_SCRIPT: 'scripts/backfill-actual-topics.ts'
   _DRY_RUN: ''
 

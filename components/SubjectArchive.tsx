@@ -7,6 +7,10 @@ import {
   getDistinctFRQTypes,
   listArchivedFRQs,
 } from '../services/firestoreService';
+import {
+  getSubjectManifest,
+  manifestItemToArchivedFRQ,
+} from '../services/manifestService';
 import { ArchivedFRQDoc, SubjectSlug } from '../types';
 import PDFPreviewPanel from './PDFPreviewPanel';
 
@@ -66,6 +70,29 @@ type SortDirection = 'asc' | 'desc';
 const compareNatural = (a: string, b: string): number =>
   a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 
+const compareItems = (
+  a: ArchivedFRQDoc,
+  b: ArchivedFRQDoc,
+  column: SortColumn,
+  direction: SortDirection
+): number => {
+  let cmp = 0;
+  if (column === 'generated') {
+    const at = a.createdAt?.getTime() ?? 0;
+    const bt = b.createdAt?.getTime() ?? 0;
+    cmp = at - bt;
+  } else if (column === 'units') {
+    const au = deriveUnits(effectiveTopics(a)).join(',');
+    const bu = deriveUnits(effectiveTopics(b)).join(',');
+    cmp = compareNatural(au, bu);
+  } else if (column === 'topics') {
+    const at = effectiveTopics(a).join(',');
+    const bt = effectiveTopics(b).join(',');
+    cmp = compareNatural(at, bt);
+  }
+  return direction === 'asc' ? cmp : -cmp;
+};
+
 interface SortHeaderProps {
   label: string;
   column: SortColumn;
@@ -103,14 +130,32 @@ const SortHeader: React.FC<SortHeaderProps> = ({
   );
 };
 
+// Two data sources, picked lazily at load time:
+//   - 'manifest':  one HTTP GET pulls the whole subject's listing
+//                  metadata, then everything (filter, sort, paginate)
+//                  is in-memory. Cross-page sort is exact, paging is
+//                  instant.
+//   - 'firestore': legacy cursor-based path. Used when the manifest is
+//                  missing/stale (e.g. function not deployed yet, or
+//                  the subject has had no writes since deploy). Each
+//                  page hit is a Firestore round-trip; sort is
+//                  per-page only.
+type Source = 'manifest' | 'firestore';
+
 const SubjectArchive: React.FC = () => {
   const params = useParams<{ subject: string }>();
   const subjectSlug = params.subject as SubjectSlug | undefined;
   const subject = subjectSlug ? SUBJECTS_BY_SLUG[subjectSlug] : undefined;
 
+  // The full filtered+sorted list of docs for this subject when running
+  // off the manifest. Empty when on the Firestore path.
+  const [allItems, setAllItems] = useState<ArchivedFRQDoc[]>([]);
+  // The single page of docs currently on screen. Sliced from `allItems`
+  // on the manifest path, fetched per-page on the Firestore path.
   const [items, setItems] = useState<ArchivedFRQDoc[]>([]);
-  // Cursor stack: index N holds the cursor that _started_ page N. cursorStack[0]
-  // is always null (first page). cursorStack[1] is the lastDoc of page 0, etc.
+  const [source, setSource] = useState<Source>('manifest');
+  // Cursor stack for the Firestore fallback: index N holds the cursor
+  // that _started_ page N. cursorStack[0] is always null (first page).
   const [cursorStack, setCursorStack] = useState<Cursor[]>([null]);
   const [currentPage, setCurrentPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -121,11 +166,10 @@ const SubjectArchive: React.FC = () => {
   const [frqTypes, setFrqTypes] = useState<string[]>([]);
   const [activeFrqType, setActiveFrqType] = useState<string | null>(null);
 
-  // Client-side sort state. The server always returns rows in
-  // createdAt-desc order (from the Firestore query), and this state
-  // re-sorts the currently loaded page in-place when the user clicks a
-  // column header. Cross-page sort is intentionally not attempted —
-  // pagination stays cursor-driven against the server.
+  // Client-side sort state. On the manifest path this is applied across
+  // the full filtered list. On the Firestore path it only re-sorts the
+  // currently loaded page in place (cross-page sort would require
+  // pulling everything anyway, defeating the cursor pagination).
   const [sortColumn, setSortColumn] = useState<SortColumn>('generated');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
@@ -140,10 +184,12 @@ const SubjectArchive: React.FC = () => {
 
   // The trailing cursor of whatever page is currently on screen. Held in a
   // ref instead of state because it's a Firestore snapshot object and we
-  // don't want to trigger renders when it changes.
+  // don't want to trigger renders when it changes. Only used on the
+  // Firestore fallback path.
   const trailingCursorRef = useRef<Cursor>(null);
 
-  const loadPage = useCallback(
+  // Load via Firestore: cursor-based pagination, server-side filter.
+  const loadPageFromFirestore = useCallback(
     async (cursor: Cursor) => {
       if (!subjectSlug) return;
       setLoading(true);
@@ -171,27 +217,53 @@ const SubjectArchive: React.FC = () => {
     [subjectSlug, activeFrqType]
   );
 
-  // Reset pagination + reload whenever subject or filter changes.
-  useEffect(() => {
-    setCursorStack([null]);
-    setCurrentPage(0);
-    setSelected(null);
-    void loadPage(null);
-  }, [loadPage]);
-
-  // Populate filter chips with the distinct FRQ type short codes present
-  // for this subject (sampled from the latest docs).
+  // Reset pagination + reload whenever subject or filter changes. Tries
+  // the manifest first; on miss, falls back to the Firestore path.
   useEffect(() => {
     if (!subjectSlug) return;
+
     let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setSelected(null);
+    setCurrentPage(0);
+    setCursorStack([null]);
+
     (async () => {
+      const manifest = await getSubjectManifest(subjectSlug);
+      if (cancelled) return;
+
+      if (manifest) {
+        setSource('manifest');
+        setFrqTypes(manifest.distinctFrqTypes);
+        const filtered = activeFrqType
+          ? manifest.items.filter(
+              (item) => item.metadata.frqTypeShort === activeFrqType
+            )
+          : manifest.items;
+        const archived = filtered.map((item) =>
+          manifestItemToArchivedFRQ(subjectSlug, item)
+        );
+        setAllItems(archived);
+        setLoading(false);
+        return;
+      }
+
+      // No manifest available — fall back to the cursor path. This also
+      // populates the filter chips via a separate query (manifest path
+      // gets them from the manifest in a single round-trip).
+      setSource('firestore');
+      setAllItems([]);
       const types = await getDistinctFRQTypes(subjectSlug);
-      if (!cancelled) setFrqTypes(types);
+      if (cancelled) return;
+      setFrqTypes(types);
+      await loadPageFromFirestore(null);
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [subjectSlug]);
+  }, [subjectSlug, activeFrqType, loadPageFromFirestore]);
 
   const subjectHeader = useMemo(() => {
     if (!subject) return null;
@@ -206,47 +278,71 @@ const SubjectArchive: React.FC = () => {
   }, [subject]);
 
   const handleNext = async () => {
-    if (!hasMore || loading) return;
+    if (loading) return;
+    if (source === 'manifest') {
+      if (!hasMore) return;
+      setCurrentPage((p) => p + 1);
+      return;
+    }
+    if (!hasMore) return;
     const nextCursor = trailingCursorRef.current;
     if (!nextCursor) return;
     setCursorStack((prev) => [...prev, nextCursor]);
     setCurrentPage((p) => p + 1);
-    await loadPage(nextCursor);
+    await loadPageFromFirestore(nextCursor);
   };
 
   const handlePrev = async () => {
     if (currentPage === 0 || loading) return;
+    if (source === 'manifest') {
+      setCurrentPage((p) => Math.max(0, p - 1));
+      return;
+    }
     const newStack = cursorStack.slice(0, -1);
     const cursor = newStack[newStack.length - 1] ?? null;
     setCursorStack(newStack);
     setCurrentPage((p) => Math.max(0, p - 1));
-    await loadPage(cursor);
+    await loadPageFromFirestore(cursor);
   };
 
-  // Re-sort the currently loaded page in memory whenever the sort
-  // state or the underlying items change. This is a view layer
-  // transformation only — it doesn't affect pagination cursors.
-  const sortedItems = useMemo(() => {
-    const copy = [...items];
-    copy.sort((a, b) => {
-      let cmp = 0;
-      if (sortColumn === 'generated') {
-        const at = a.createdAt?.getTime() ?? 0;
-        const bt = b.createdAt?.getTime() ?? 0;
-        cmp = at - bt;
-      } else if (sortColumn === 'units') {
-        const au = deriveUnits(effectiveTopics(a)).join(',');
-        const bu = deriveUnits(effectiveTopics(b)).join(',');
-        cmp = compareNatural(au, bu);
-      } else if (sortColumn === 'topics') {
-        const at = effectiveTopics(a).join(',');
-        const bt = effectiveTopics(b).join(',');
-        cmp = compareNatural(at, bt);
-      }
-      return sortDirection === 'asc' ? cmp : -cmp;
-    });
+  // The full sorted list — only meaningful on the manifest path, where
+  // we have every doc client-side. On the Firestore path this is empty
+  // and we sort the per-page `items` array instead (see `pagedItems`).
+  const sortedAllItems = useMemo(() => {
+    const copy = [...allItems];
+    copy.sort((a, b) => compareItems(a, b, sortColumn, sortDirection));
     return copy;
-  }, [items, sortColumn, sortDirection]);
+  }, [allItems, sortColumn, sortDirection]);
+
+  // What the table actually renders. On the manifest path this is the
+  // current page slice of the fully sorted list; on the Firestore path
+  // it's a sort of the page that was already returned.
+  const pagedItems = useMemo(() => {
+    if (source === 'manifest') {
+      const start = currentPage * ARCHIVE_PAGE_SIZE;
+      return sortedAllItems.slice(start, start + ARCHIVE_PAGE_SIZE);
+    }
+    const copy = [...items];
+    copy.sort((a, b) => compareItems(a, b, sortColumn, sortDirection));
+    return copy;
+  }, [source, sortedAllItems, currentPage, items, sortColumn, sortDirection]);
+
+  // Manifest path: derive `hasMore` and total page count from the
+  // sorted full list. Firestore path: `hasMore` already came back from
+  // the page query, total pages are unknown.
+  const totalPages = source === 'manifest'
+    ? Math.max(1, Math.ceil(sortedAllItems.length / ARCHIVE_PAGE_SIZE))
+    : null;
+  const effectiveHasMore = source === 'manifest'
+    ? (currentPage + 1) * ARCHIVE_PAGE_SIZE < sortedAllItems.length
+    : hasMore;
+
+  // If the user changes the sort while on a non-first page of the
+  // manifest path, the slice they were looking at no longer makes
+  // sense — snap back to page 1.
+  useEffect(() => {
+    if (source === 'manifest') setCurrentPage(0);
+  }, [source, sortColumn, sortDirection]);
 
   if (!subject) {
     return (
@@ -344,21 +440,21 @@ const SubjectArchive: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {loading && items.length === 0 && (
+                  {loading && pagedItems.length === 0 && (
                     <tr>
                       <td colSpan={5} className="px-4 py-12 text-center text-gray-500">
                         Loading archive…
                       </td>
                     </tr>
                   )}
-                  {!loading && items.length === 0 && !error && (
+                  {!loading && pagedItems.length === 0 && !error && (
                     <tr>
                       <td colSpan={5} className="px-4 py-12 text-center text-gray-500">
                         No FRQs match this filter.
                       </td>
                     </tr>
                   )}
-                  {sortedItems.map((item) => {
+                  {pagedItems.map((item) => {
                     const isSelected = selected?.id === item.id;
                     const topics = effectiveTopics(item);
                     return (
@@ -398,7 +494,10 @@ const SubjectArchive: React.FC = () => {
 
             {/* Pagination */}
             <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm">
-              <div className="text-gray-500">Page {currentPage + 1}</div>
+              <div className="text-gray-500">
+                Page {currentPage + 1}
+                {totalPages !== null && ` of ${totalPages}`}
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -411,7 +510,7 @@ const SubjectArchive: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleNext}
-                  disabled={!hasMore || loading}
+                  disabled={!effectiveHasMore || loading}
                   className="px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Next
