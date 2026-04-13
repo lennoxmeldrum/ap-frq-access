@@ -1,0 +1,135 @@
+# Build + deploy the manifest-rebuild Cloud Functions, then seed the
+# manifests in Storage. One click in the Cloud Console rebuilds and
+# refreshes the entire archive caching layer.
+#
+# What it does, in order
+# ----------------------
+#   1. Compile functions/src/*.ts -> functions/lib/*.js with tsc.
+#   2. Deploy `rebuildManifestOnFrqWrite` (Firestore trigger) and
+#      `rebuildAllManifests` (private HTTP) as Cloud Functions Gen 2
+#      via gcloud. No Firebase CLI involved — Firebase Functions v2
+#      and Cloud Functions Gen 2 are the same runtime, so the gcloud
+#      path works without any auth gymnastics.
+#   3. POST to the deployed `rebuildAllManifests` with no body. The
+#      function auto-discovers every distinct `subject` value in
+#      Firestore and writes a fresh manifest JSON per subject to
+#      gs://<bucket>/frq-archive/manifests/<subject>.json. Subsequent
+#      FRQ writes auto-update each manifest via the Firestore trigger.
+#
+# After this trigger runs once, the access site reads its archive
+# table from a single Storage GET instead of a paginated Firestore
+# query, and stays in sync without any further intervention.
+#
+# How to set this up (one time)
+# -----------------------------
+#   1. Cloud Console -> Cloud Build -> Triggers, create a manual
+#      trigger called "ap-frq-access-functions":
+#        - Event: Manual invocation
+#        - Source: this repo, branch `main`
+#        - Configuration: Cloud Build configuration file (yaml)
+#        - Location: Repository -> `cloudbuild.functions.yaml`
+#
+#   2. Grant the Cloud Build service account (the default compute SA
+#      on this project) these roles, project-wide:
+#        - Cloud Functions Developer
+#        - Cloud Run Admin                  (Functions Gen 2 == Run)
+#        - Eventarc Developer               (creates the Firestore
+#                                            trigger subscription)
+#        - Service Account User             (so it can act-as the
+#                                            runtime SA below)
+#        - Cloud Run Invoker                (so step 3 can call the
+#                                            private HTTP function)
+#
+#   3. Grant the function's runtime service account
+#      (the same default compute SA, unless you override it) these
+#      roles, project-wide:
+#        - Cloud Datastore User             (reads `frqs` docs)
+#        - Storage Object Admin             (writes manifest JSON)
+#
+#   4. Click "Run trigger". Watch the build log; the final step
+#      prints the rebuilt subject -> doc-count map.
+#
+#   5. After the first successful run, you don't need to re-click
+#      this trigger unless you change code in functions/src/ or want
+#      to force a manifest rebuild. Day-to-day FRQ writes are picked
+#      up automatically by the Firestore trigger.
+
+steps:
+  # 1. Build the TypeScript sources.
+  - name: 'node:20'
+    entrypoint: 'bash'
+    dir: 'functions'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        npm ci --silent
+        npm run build
+
+  # 2. Deploy the Firestore-triggered function. Gen 2 deploys are
+  #    idempotent — re-running this step updates the existing
+  #    function in place, no manual cleanup needed.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'functions'
+      - 'deploy'
+      - 'rebuildManifestOnFrqWrite'
+      - '--gen2'
+      - '--region=${_REGION}'
+      - '--runtime=nodejs20'
+      - '--source=functions'
+      - '--entry-point=rebuildManifestOnFrqWrite'
+      - '--trigger-event-filters=type=google.cloud.firestore.document.v1.written'
+      - '--trigger-event-filters=database=(default)'
+      - '--trigger-event-filters-path-pattern=document=frqs/{frqId}'
+      - '--trigger-location=${_REGION}'
+      - '--memory=512Mi'
+      - '--timeout=120s'
+      - '--project=${_FIREBASE_PROJECT_ID}'
+
+  # 3. Deploy the private HTTP recovery hatch.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'functions'
+      - 'deploy'
+      - 'rebuildAllManifests'
+      - '--gen2'
+      - '--region=${_REGION}'
+      - '--runtime=nodejs20'
+      - '--source=functions'
+      - '--entry-point=rebuildAllManifests'
+      - '--trigger-http'
+      - '--no-allow-unauthenticated'
+      - '--memory=512Mi'
+      - '--timeout=540s'
+      - '--project=${_FIREBASE_PROJECT_ID}'
+
+  # 4. Seed the manifests by calling the deployed function with an
+  #    empty body. The function auto-discovers subjects, so this
+  #    needs no maintenance when subjects are added or removed.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        URL="$(gcloud functions describe rebuildAllManifests \
+          --gen2 --region=${_REGION} --project=${_FIREBASE_PROJECT_ID} \
+          --format='value(serviceConfig.uri)')"
+        echo "Seeding manifests via $${URL}"
+        TOKEN="$(gcloud auth print-identity-token --audiences=$${URL})"
+        curl --fail-with-body -X POST \
+          -H "Authorization: Bearer $${TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d '{}' \
+          "$${URL}"
+        echo
+
+substitutions:
+  _FIREBASE_PROJECT_ID: 'unique-sentinel-423412-q3'
+  _REGION: 'us-central1'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
