@@ -197,13 +197,37 @@ export const rebuildManifestOnFrqWrite = onDocumentWritten(
   }
 );
 
-// Manual recovery hatch. POST /rebuildAllManifests with a JSON body
-// like {"subjects": ["physics", "chemistry", "psychology", "apbio"]}.
-// Used to bootstrap the manifests after first deploy, or to repair
-// them after a Firestore restore. Restricted to project-internal
-// callers via Cloud Run IAM (default `--no-allow-unauthenticated`
-// when deploying functions); call with `gcloud functions call` or
-// from a Cloud Build step authenticated as the project SA.
+// Discover the distinct set of `subject` values currently present in
+// the `frqs` collection. Used by `rebuildAllManifests` when the caller
+// doesn't pass an explicit subject list (the typical "rebuild
+// everything" call). Implemented as a full-collection scan that only
+// reads the `subject` field per doc — fine up to ~50k docs, after
+// which we'd want to maintain a `subjects` meta doc instead.
+const discoverSubjects = async (): Promise<string[]> => {
+  const db = getFirestore();
+  const snapshot = await db.collection(FRQS_COLLECTION).select('subject').get();
+  const seen = new Set<string>();
+  for (const doc of snapshot.docs) {
+    const subject = doc.get('subject');
+    if (typeof subject === 'string' && subject.length > 0) {
+      seen.add(subject);
+    }
+  }
+  return Array.from(seen).sort();
+};
+
+// Manual recovery hatch. POST /rebuildAllManifests with no body to
+// rebuild every subject currently in Firestore, or with a JSON body
+// like {"subjects": ["physics", "chemistry"]} to limit to a subset.
+//
+// Used to bootstrap the manifests after first deploy and to repair
+// them after a Firestore restore. The post-deploy step in
+// cloudbuild.functions.yaml hits this with an empty body so the seed
+// step needs no maintenance when subjects are added or removed.
+//
+// Restricted to project-internal callers via Cloud Run IAM (deployed
+// with `--no-allow-unauthenticated`); call from a Cloud Build step
+// authenticated as the project SA, or via `gcloud functions call`.
 export const rebuildAllManifests = onRequest(
   {
     region: 'us-central1',
@@ -213,12 +237,17 @@ export const rebuildAllManifests = onRequest(
   },
   async (req, res) => {
     const body = (req.body ?? {}) as { subjects?: unknown };
-    const subjects = Array.isArray(body.subjects)
+    const requested = Array.isArray(body.subjects)
       ? (body.subjects.filter((s) => typeof s === 'string') as string[])
       : [];
 
+    const subjects = requested.length > 0 ? requested : await discoverSubjects();
+
     if (subjects.length === 0) {
-      res.status(400).json({ error: 'Body must include { "subjects": [...] }' });
+      res.status(404).json({
+        error:
+          'No subjects found in Firestore. Pass an explicit subjects list, or generate at least one FRQ first.',
+      });
       return;
     }
 
@@ -232,6 +261,6 @@ export const rebuildAllManifests = onRequest(
       }
     }
 
-    res.json({ rebuilt: results });
+    res.json({ rebuilt: results, requested: subjects });
   }
 );
