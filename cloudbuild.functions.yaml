@@ -129,7 +129,11 @@ steps:
 
 substitutions:
   _FIREBASE_PROJECT_ID: 'unique-sentinel-423412-q3'
-  _REGION: 'us-central1'
+  # Firestore triggers MUST be in the same region as the Firestore
+  # database itself. This project's database lives in us-west1 — the
+  # same region the Cloud Run web apps deploy to — so every function
+  # that cares about Firestore events has to go there too.
+  _REGION: 'us-west1'
 
 options:
   logging: CLOUD_LOGGING_ONLY

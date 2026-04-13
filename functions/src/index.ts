@@ -166,7 +166,7 @@ export const rebuildManifestForSubject = async (subject: string): Promise<number
 export const rebuildManifestOnFrqWrite = onDocumentWritten(
   {
     document: `${FRQS_COLLECTION}/{frqId}`,
-    region: 'us-central1',
+    region: 'us-west1',
     timeoutSeconds: 120,
     memory: '512MiB',
   },
@@ -230,7 +230,7 @@ const discoverSubjects = async (): Promise<string[]> => {
 // authenticated as the project SA, or via `gcloud functions call`.
 export const rebuildAllManifests = onRequest(
   {
-    region: 'us-central1',
+    region: 'us-west1',
     timeoutSeconds: 540,
     memory: '512MiB',
     invoker: 'private',
