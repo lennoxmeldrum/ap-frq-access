@@ -142,7 +142,7 @@ const SortHeader: React.FC<SortHeaderProps> = ({
 //                  per-page only.
 type Source = 'manifest' | 'firestore';
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 const SubjectArchive: React.FC = () => {
   const params = useParams<{ subject: string }>();
