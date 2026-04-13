@@ -8,10 +8,38 @@
 
 export type SubjectSlug = 'physics' | 'chemistry' | 'psychology' | 'apbio';
 
+// Subject-area groupings on the College Board's AP Central course list:
+//   https://apcentral.collegeboard.org/courses
+// We surface these as section headings on the subject picker so that
+// once the fleet has a dozen generators live, students aren't staring
+// at a flat wall of cards. Names match the College Board's wording
+// exactly for discoverability.
+export type SubjectCategory =
+  | 'Arts'
+  | 'English'
+  | 'History and Social Sciences'
+  | 'Math and Computer Science'
+  | 'Sciences'
+  | 'World Languages and Cultures';
+
+// Canonical ordering of categories — mirrors the College Board page
+// so a student scanning the picker sees the same layout they see on
+// AP Central. Only populated categories render; empty ones are
+// filtered out at render time.
+export const CATEGORY_ORDER: SubjectCategory[] = [
+  'Arts',
+  'English',
+  'History and Social Sciences',
+  'Math and Computer Science',
+  'Sciences',
+  'World Languages and Cultures',
+];
+
 export interface SubjectInfo {
   slug: SubjectSlug;
   displayName: string;     // "AP Physics C: Mechanics"
   shortName: string;       // "Physics C"
+  category: SubjectCategory;
   colorClass: string;      // Tailwind background class for the subject card
   accentClass: string;     // Tailwind accent / border class
   // Storage path prefix used for backfill and "eyeball" identification of
@@ -37,4 +65,10 @@ export interface ArchivedFRQDoc {
   metadata: ArchivedFRQMetadata;
   storagePath: string | null;
   createdAt: Date | null;
+  // Cost of the Gemini calls that produced this FRQ, stamped by
+  // generators that were written after services/pricing.ts shipped.
+  // Absent / zero on legacy docs. Generators provide a per-call
+  // `usage` breakdown too, but the access site only surfaces the
+  // total — keep the archive UI simple.
+  totalCostUsd?: number;
 }

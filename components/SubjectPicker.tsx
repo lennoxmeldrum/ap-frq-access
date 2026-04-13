@@ -1,22 +1,29 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { SUBJECTS } from '../constants';
 import { getSubjectFRQCount } from '../services/firestoreService';
+import { formatUsd } from '../services/format';
 import { getSubjectManifest } from '../services/manifestService';
-import { SubjectInfo, SubjectSlug } from '../types';
+import { CATEGORY_ORDER, SubjectCategory, SubjectInfo, SubjectSlug } from '../types';
 
-type CountState = Record<SubjectSlug, number | null>;
+interface SubjectStats {
+  count: number | null;     // null while loading, then the number of FRQs
+  totalCostUsd: number;     // 0 until the manifest (or a direct count) lands
+}
 
-const initialCounts: CountState = SUBJECTS.reduce((acc, subject) => {
-  acc[subject.slug] = null;
+type StatsState = Record<SubjectSlug, SubjectStats>;
+
+const initialStats: StatsState = SUBJECTS.reduce((acc, subject) => {
+  acc[subject.slug] = { count: null, totalCostUsd: 0 };
   return acc;
-}, {} as CountState);
+}, {} as StatsState);
 
-const SubjectCard: React.FC<{ subject: SubjectInfo; count: number | null }> = ({
+const SubjectCard: React.FC<{ subject: SubjectInfo; stats: SubjectStats }> = ({
   subject,
-  count,
+  stats,
 }) => {
+  const { count, totalCostUsd } = stats;
   const isLoading = count === null;
   const isDisabled = !isLoading && count === 0;
 
@@ -39,6 +46,11 @@ const SubjectCard: React.FC<{ subject: SubjectInfo; count: number | null }> = ({
           ? 'No archived FRQs yet'
           : `${count.toLocaleString()} FRQ${count === 1 ? '' : 's'} available`}
       </p>
+      {!isLoading && !isDisabled && totalCostUsd > 0 && (
+        <p className="mt-1 text-xs text-gray-400">
+          {formatUsd(totalCostUsd)} in Gemini API spend
+        </p>
+      )}
       {!isDisabled && !isLoading && (
         <div className={`mt-6 text-sm font-medium ${subject.accentClass.split(' ').slice(1).join(' ')}`}>
           Browse archive →
@@ -65,7 +77,7 @@ const SubjectCard: React.FC<{ subject: SubjectInfo; count: number | null }> = ({
 };
 
 const SubjectPicker: React.FC = () => {
-  const [counts, setCounts] = useState<CountState>(initialCounts);
+  const [stats, setStats] = useState<StatsState>(initialStats);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,24 +85,31 @@ const SubjectPicker: React.FC = () => {
     (async () => {
       // Fire all subject lookups in parallel. Each one tries the
       // pre-built manifest from Storage first (one HTTP GET, no
-      // Firestore round-trip) and falls back to Firestore's aggregate
-      // count if the manifest isn't there yet — covers the window
-      // between deploying the rebuild function and the first FRQ
-      // write that materializes the file.
+      // Firestore round-trip). The manifest includes both the count
+      // and the running cost total — so a manifest hit populates
+      // both in one request. If the manifest is missing we fall back
+      // to Firestore's aggregate count (and leave the cost total at
+      // 0 — computing it from Firestore would mean walking every
+      // doc, which defeats the point of the manifest cache).
       const results = await Promise.all(
         SUBJECTS.map(async (subject) => {
           const manifest = await getSubjectManifest(subject.slug);
-          const count =
-            manifest?.count ?? (await getSubjectFRQCount(subject.slug));
-          return [subject.slug, count] as const;
+          if (manifest) {
+            return [
+              subject.slug,
+              { count: manifest.count, totalCostUsd: manifest.totalCostUsd ?? 0 },
+            ] as const;
+          }
+          const count = await getSubjectFRQCount(subject.slug);
+          return [subject.slug, { count, totalCostUsd: 0 }] as const;
         })
       );
 
       if (cancelled) return;
-      setCounts((prev) => {
+      setStats((prev) => {
         const next = { ...prev };
-        for (const [slug, count] of results) {
-          next[slug] = count;
+        for (const [slug, subjectStats] of results) {
+          next[slug] = subjectStats;
         }
         return next;
       });
@@ -99,6 +118,25 @@ const SubjectPicker: React.FC = () => {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Group subjects by the College Board category they belong to.
+  // Categories with zero registered subjects are omitted from the
+  // rendered output entirely — no empty headers — so the UI grows
+  // organically as new subjects come online.
+  const byCategory = useMemo(() => {
+    const groups = new Map<SubjectCategory, SubjectInfo[]>();
+    for (const subject of SUBJECTS) {
+      const list = groups.get(subject.category) ?? [];
+      list.push(subject);
+      groups.set(subject.category, list);
+    }
+    return CATEGORY_ORDER
+      .filter((category) => (groups.get(category)?.length ?? 0) > 0)
+      .map((category) => ({
+        category,
+        subjects: groups.get(category)!,
+      }));
   }, []);
 
   return (
@@ -111,9 +149,22 @@ const SubjectPicker: React.FC = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {SUBJECTS.map((subject) => (
-          <SubjectCard key={subject.slug} subject={subject} count={counts[subject.slug]} />
+      <div className="space-y-12">
+        {byCategory.map(({ category, subjects }) => (
+          <section key={category}>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 border-b border-gray-200 pb-2 mb-6">
+              {category}
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {subjects.map((subject) => (
+                <SubjectCard
+                  key={subject.slug}
+                  subject={subject}
+                  stats={stats[subject.slug]}
+                />
+              ))}
+            </div>
+          </section>
         ))}
       </div>
     </div>

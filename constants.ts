@@ -3,12 +3,14 @@ import { SubjectInfo, SubjectSlug } from './types';
 // Canonical subject list. To add a new subject to the archive after its
 // generator is live: add an entry here, confirm the generator writes the
 // matching `subject` slug on every FRQ doc, and (if needed) backfill any
-// docs it wrote before the field existed.
+// docs it wrote before the field existed. See REGISTER_NEW_SUBJECT.md
+// at the repo root for the full walkthrough.
 export const SUBJECTS: SubjectInfo[] = [
   {
     slug: 'physics',
     displayName: 'AP Physics C: Mechanics',
     shortName: 'Physics C: Mechanics',
+    category: 'Sciences',
     colorClass: 'bg-blue-600',
     accentClass: 'border-blue-600 text-blue-700',
     storagePrefix: 'AP PCM FRQ',
@@ -17,6 +19,7 @@ export const SUBJECTS: SubjectInfo[] = [
     slug: 'chemistry',
     displayName: 'AP Chemistry',
     shortName: 'Chemistry',
+    category: 'Sciences',
     colorClass: 'bg-emerald-600',
     accentClass: 'border-emerald-600 text-emerald-700',
     storagePrefix: 'AP CHEM FRQ',
@@ -25,6 +28,7 @@ export const SUBJECTS: SubjectInfo[] = [
     slug: 'psychology',
     displayName: 'AP Psychology',
     shortName: 'Psychology',
+    category: 'History and Social Sciences',
     colorClass: 'bg-violet-600',
     accentClass: 'border-violet-600 text-violet-700',
     storagePrefix: 'AP PSYCH FRQ',
@@ -33,6 +37,7 @@ export const SUBJECTS: SubjectInfo[] = [
     slug: 'apbio',
     displayName: 'AP Biology',
     shortName: 'Biology',
+    category: 'Sciences',
     colorClass: 'bg-amber-600',
     accentClass: 'border-amber-600 text-amber-700',
     storagePrefix: 'AP BIO FRQ',
