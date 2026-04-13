@@ -29,6 +29,14 @@ export const SUBJECTS: SubjectInfo[] = [
     accentClass: 'border-violet-600 text-violet-700',
     storagePrefix: 'AP PSYCH FRQ',
   },
+  {
+    slug: 'apbio',
+    displayName: 'AP Biology',
+    shortName: 'Biology',
+    colorClass: 'bg-amber-600',
+    accentClass: 'border-amber-600 text-amber-700',
+    storagePrefix: 'AP BIO FRQ',
+  },
 ];
 
 export const SUBJECTS_BY_SLUG: Record<SubjectSlug, SubjectInfo> = SUBJECTS.reduce(

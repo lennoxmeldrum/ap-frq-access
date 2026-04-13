@@ -1,12 +1,12 @@
 // Shared types for the AP FRQ Archive access site.
 //
-// The Firestore `frqs` collection is written by three different generators
-// (Physics C: Mechanics, Chemistry, Psychology) and the doc shape differs
-// slightly per subject. This site only consumes the fields that are common
-// across all three, plus metadata.frqType / metadata.frqTypeShort for
-// filtering.
+// The Firestore `frqs` collection is written by four different generators
+// (Physics C: Mechanics, Chemistry, Psychology, Biology) and the doc
+// shape differs slightly per subject. This site only consumes the fields
+// that are common across all of them, plus metadata.frqType /
+// metadata.frqTypeShort for filtering.
 
-export type SubjectSlug = 'physics' | 'chemistry' | 'psychology';
+export type SubjectSlug = 'physics' | 'chemistry' | 'psychology' | 'apbio';
 
 export interface SubjectInfo {
   slug: SubjectSlug;
