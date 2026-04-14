@@ -39,7 +39,7 @@
 
 import admin from 'firebase-admin';
 
-type SubjectSlug = 'appcm' | 'chemistry' | 'psychology';
+type SubjectSlug = 'appcm' | 'chemistry' | 'psychology' | 'apbio';
 
 interface PrefixRule {
   prefix: string;
@@ -52,6 +52,7 @@ const PREFIX_RULES: PrefixRule[] = [
   { prefix: 'AP PCM FRQ', subject: 'appcm' },
   { prefix: 'AP CHEM FRQ', subject: 'chemistry' },
   { prefix: 'AP PSYCH FRQ', subject: 'psychology' },
+  { prefix: 'AP BIO FRQ', subject: 'apbio' },
 ];
 
 // frqTypeShort fallback mapping — only used if storagePath is missing.
@@ -68,6 +69,9 @@ const FRQ_TYPE_SHORT_TO_SUBJECT: Record<string, SubjectSlug> = {
   // Psychology
   AAQ: 'psychology',
   EBQ: 'psychology',
+  // Biology — add frqTypeShort codes here once the generator's short
+  // codes are known. The storagePrefix rule above covers all bio docs
+  // that have a storagePath (the normal case).
 };
 
 const inferSubject = (data: FirebaseFirestore.DocumentData): SubjectSlug | null => {
@@ -107,7 +111,7 @@ const main = async () => {
   const stats = {
     alreadySet: 0,
     toUpdate: 0,
-    byNewSubject: { appcm: 0, chemistry: 0, psychology: 0 } as Record<SubjectSlug, number>,
+    byNewSubject: { appcm: 0, chemistry: 0, psychology: 0, apbio: 0 } as Record<SubjectSlug, number>,
     unresolved: 0,
   };
 
@@ -139,6 +143,7 @@ const main = async () => {
   console.log(`    appcm:      ${stats.byNewSubject.appcm}`);
   console.log(`    chemistry:  ${stats.byNewSubject.chemistry}`);
   console.log(`    psychology: ${stats.byNewSubject.psychology}`);
+  console.log(`    apbio:      ${stats.byNewSubject.apbio}`);
   console.log(`  Unresolved:          ${stats.unresolved}`);
   console.log('');
 
