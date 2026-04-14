@@ -31,7 +31,7 @@ string the generator writes into `data.subject`:
 
 ```ts
 export type SubjectSlug =
-  | 'physics'
+  | 'appcm'
   | 'chemistry'
   | 'psychology'
   | 'apbio'
@@ -58,7 +58,7 @@ render on the picker.
 ```
 
 Pick a color that isn't already in use:
-- `blue` → physics
+- `blue` → appcm
 - `emerald` → chemistry
 - `violet` → psychology
 - `amber` → apbio

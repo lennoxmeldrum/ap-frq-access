@@ -136,7 +136,7 @@ const main = async () => {
   console.log('Summary:');
   console.log(`  Already had subject: ${stats.alreadySet}`);
   console.log(`  Will be updated:     ${stats.toUpdate}`);
-  console.log(`    physics:    ${stats.byNewSubject.appcm}`);
+  console.log(`    appcm:      ${stats.byNewSubject.appcm}`);
   console.log(`    chemistry:  ${stats.byNewSubject.chemistry}`);
   console.log(`    psychology: ${stats.byNewSubject.psychology}`);
   console.log(`  Unresolved:          ${stats.unresolved}`);
