@@ -10,10 +10,22 @@
  * Trigger model
  * -------------
  * Any write (create / update / delete) to `frqs/{id}` fires
- * `rebuildManifestOnFrqWrite`. The function reads the doc, infers the
- * affected subject(s) (the previous and the new value of `data.subject`
- * — they differ if a backfill rewrites the subject field), and rebuilds
- * each affected subject's manifest.
+ * `rebuildManifestOnFrqWrite`. The function re-reads the doc from
+ * Firestore, reads its `subject` field, and rebuilds that subject's
+ * manifest. If the doc no longer exists (delete) or is missing a
+ * subject, we fall back to rebuilding every manifest so nothing is
+ * stranded — deletes are rare in this archive and the cost is small.
+ *
+ * We don't use `event.data.before` / `event.data.after` even though
+ * firebase-functions' `onDocumentWritten` nominally exposes them: this
+ * function is deployed via `gcloud functions deploy` (see
+ * cloudbuild.functions.yaml), which configures the Eventarc trigger in
+ * Pub/Sub binding mode (the request URL carries
+ * `?__GCP_CloudEventsMode=CE_PUBSUB_BINDING`). firebase-functions v2
+ * doesn't decode the Firestore protobuf `data` payload in that mode,
+ * so both snapshots arrive empty and we'd silently skip every rebuild.
+ * `event.params.frqId` is still reliable because params are parsed
+ * from the CloudEvent `subject` attribute, not its `data`.
  *
  * Concurrency
  * -----------
@@ -199,50 +211,14 @@ export const rebuildManifestForSubject = async (subject: string): Promise<number
   return items.length;
 };
 
-// Firestore trigger: any write to `frqs/{id}` rebuilds the manifest(s)
-// for the subject(s) affected. We rebuild for both the before-value and
-// after-value subjects so that backfills which change the subject field
-// (e.g. backfill-subject-field.ts) end up reflected in both manifests.
-export const rebuildManifestOnFrqWrite = onDocumentWritten(
-  {
-    document: `${FRQS_COLLECTION}/{frqId}`,
-    region: 'us-west1',
-    timeoutSeconds: 120,
-    memory: '512MiB',
-  },
-  async (event) => {
-    const before = event.data?.before?.data() as FirebaseFirestore.DocumentData | undefined;
-    const after = event.data?.after?.data() as FirebaseFirestore.DocumentData | undefined;
-
-    const subjects = new Set<string>();
-    const beforeSubject = before?.subject as string | undefined;
-    const afterSubject = after?.subject as string | undefined;
-    if (beforeSubject) subjects.add(beforeSubject);
-    if (afterSubject) subjects.add(afterSubject);
-
-    if (subjects.size === 0) {
-      logger.warn('Skipping manifest rebuild — no subject on doc', {
-        frqId: event.params.frqId,
-      });
-      return;
-    }
-
-    for (const subject of subjects) {
-      try {
-        await rebuildManifestForSubject(subject);
-      } catch (err) {
-        logger.error('Failed to rebuild manifest', { subject, err });
-      }
-    }
-  }
-);
-
 // Discover the distinct set of `subject` values currently present in
 // the `frqs` collection. Used by `rebuildAllManifests` when the caller
 // doesn't pass an explicit subject list (the typical "rebuild
-// everything" call). Implemented as a full-collection scan that only
-// reads the `subject` field per doc — fine up to ~50k docs, after
-// which we'd want to maintain a `subjects` meta doc instead.
+// everything" call), and by `rebuildManifestOnFrqWrite` on deletes
+// when we can't tell which subject was affected. Implemented as a
+// full-collection scan that only reads the `subject` field per doc —
+// fine up to ~50k docs, after which we'd want to maintain a
+// `subjects` meta doc instead.
 const discoverSubjects = async (): Promise<string[]> => {
   const db = getFirestore();
   const snapshot = await db.collection(FRQS_COLLECTION).select('subject').get();
@@ -255,6 +231,62 @@ const discoverSubjects = async (): Promise<string[]> => {
   }
   return Array.from(seen).sort();
 };
+
+// Firestore trigger: any write to `frqs/{id}` rebuilds the manifest
+// for the subject the doc currently belongs to. On delete (or if the
+// doc is somehow missing a subject) we rebuild every manifest because
+// we no longer have anything to tell us which one was affected.
+//
+// We deliberately don't use `event.data.before` / `event.data.after`
+// — see the top-of-file comment for why they're unreliable under our
+// gcloud-based deploy.
+export const rebuildManifestOnFrqWrite = onDocumentWritten(
+  {
+    document: `${FRQS_COLLECTION}/{frqId}`,
+    region: 'us-west1',
+    timeoutSeconds: 120,
+    memory: '512MiB',
+  },
+  async (event) => {
+    const frqId = event.params.frqId;
+
+    const db = getFirestore();
+    const snap = await db.collection(FRQS_COLLECTION).doc(frqId).get();
+    const currentSubject = snap.exists
+      ? (snap.get('subject') as string | undefined)
+      : undefined;
+
+    if (currentSubject) {
+      try {
+        await rebuildManifestForSubject(currentSubject);
+      } catch (err) {
+        logger.error('Failed to rebuild manifest', {
+          subject: currentSubject,
+          err,
+        });
+      }
+      return;
+    }
+
+    // Doc deleted, or exists without a `subject` field. We don't know
+    // which subject's manifest to patch, so rebuild them all. This is
+    // more work than we'd like per trigger, but deletes are rare and
+    // the alternative is stranding a deleted doc in its old subject's
+    // manifest until the next write to that subject.
+    logger.info(
+      'Frq doc missing or has no subject; rebuilding all manifests',
+      { frqId, docExisted: snap.exists }
+    );
+    const subjects = await discoverSubjects();
+    for (const subject of subjects) {
+      try {
+        await rebuildManifestForSubject(subject);
+      } catch (err) {
+        logger.error('Failed to rebuild manifest', { subject, err });
+      }
+    }
+  }
+);
 
 // Manual recovery hatch. POST /rebuildAllManifests with no body to
 // rebuild every subject currently in Firestore, or with a JSON body
