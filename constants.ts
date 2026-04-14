@@ -7,7 +7,7 @@ import { SubjectInfo, SubjectSlug } from './types';
 // at the repo root for the full walkthrough.
 export const SUBJECTS: SubjectInfo[] = [
   {
-    slug: 'physics',
+    slug: 'appcm',
     displayName: 'AP Physics C: Mechanics',
     shortName: 'Physics C: Mechanics',
     category: 'Sciences',

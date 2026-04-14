@@ -258,7 +258,7 @@ const discoverSubjects = async (): Promise<string[]> => {
 
 // Manual recovery hatch. POST /rebuildAllManifests with no body to
 // rebuild every subject currently in Firestore, or with a JSON body
-// like {"subjects": ["physics", "chemistry"]} to limit to a subset.
+// like {"subjects": ["appcm", "chemistry"]} to limit to a subset.
 //
 // Used to bootstrap the manifests after first deploy and to repair
 // them after a Firestore restore. The post-deploy step in
