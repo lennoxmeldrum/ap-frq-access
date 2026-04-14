@@ -6,7 +6,7 @@
 // that are common across all of them, plus metadata.frqType /
 // metadata.frqTypeShort for filtering.
 
-export type SubjectSlug = 'physics' | 'chemistry' | 'psychology' | 'apbio';
+export type SubjectSlug = 'appcm' | 'chemistry' | 'psychology' | 'apbio';
 
 // Subject-area groupings on the College Board's AP Central course list:
 //   https://apcentral.collegeboard.org/courses
