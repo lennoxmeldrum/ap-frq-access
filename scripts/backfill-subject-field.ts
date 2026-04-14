@@ -39,7 +39,7 @@
 
 import admin from 'firebase-admin';
 
-type SubjectSlug = 'physics' | 'chemistry' | 'psychology';
+type SubjectSlug = 'appcm' | 'chemistry' | 'psychology';
 
 interface PrefixRule {
   prefix: string;
@@ -49,7 +49,7 @@ interface PrefixRule {
 // Order matters only if prefixes overlap. These don't, but we leave the
 // most specific ones first as a matter of habit.
 const PREFIX_RULES: PrefixRule[] = [
-  { prefix: 'AP PCM FRQ', subject: 'physics' },
+  { prefix: 'AP PCM FRQ', subject: 'appcm' },
   { prefix: 'AP CHEM FRQ', subject: 'chemistry' },
   { prefix: 'AP PSYCH FRQ', subject: 'psychology' },
 ];
@@ -58,10 +58,10 @@ const PREFIX_RULES: PrefixRule[] = [
 // These short codes are unique per subject in the current generators.
 const FRQ_TYPE_SHORT_TO_SUBJECT: Record<string, SubjectSlug> = {
   // Physics C: Mechanics
-  MR: 'physics',
-  TBR: 'physics',
-  LAB: 'physics',
-  QQT: 'physics',
+  MR: 'appcm',
+  TBR: 'appcm',
+  LAB: 'appcm',
+  QQT: 'appcm',
   // Chemistry
   Short: 'chemistry',
   Long: 'chemistry',
@@ -107,7 +107,7 @@ const main = async () => {
   const stats = {
     alreadySet: 0,
     toUpdate: 0,
-    byNewSubject: { physics: 0, chemistry: 0, psychology: 0 } as Record<SubjectSlug, number>,
+    byNewSubject: { appcm: 0, chemistry: 0, psychology: 0 } as Record<SubjectSlug, number>,
     unresolved: 0,
   };
 
@@ -136,7 +136,7 @@ const main = async () => {
   console.log('Summary:');
   console.log(`  Already had subject: ${stats.alreadySet}`);
   console.log(`  Will be updated:     ${stats.toUpdate}`);
-  console.log(`    physics:    ${stats.byNewSubject.physics}`);
+  console.log(`    physics:    ${stats.byNewSubject.appcm}`);
   console.log(`    chemistry:  ${stats.byNewSubject.chemistry}`);
   console.log(`    psychology: ${stats.byNewSubject.psychology}`);
   console.log(`  Unresolved:          ${stats.unresolved}`);
