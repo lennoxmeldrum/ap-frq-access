@@ -27,7 +27,7 @@
  * --------------------
  * `frq-archive/manifests/<subject>.json`:
  * {
- *   "subject": "physics",
+ *   "subject": "appcm",
  *   "manifestVersion": 1,
  *   "generatedAt": "2026-04-13T08:30:00.000Z",
  *   "count": 247,
